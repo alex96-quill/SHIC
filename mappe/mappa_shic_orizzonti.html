@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mappa SHIC orizzonti</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css">
+<style>
+  /* palette della SHIC (carta_identita_profili.R), uguale a mappa_shic.html */
+  :root {
+    --bg: #1c1b29; --bg2: #24233a; --testo: #f2f1f7; --testo2: #b9b7c9; --muted: #7d7b90;
+    --traccia: #34324a; --linea: #3a3852;
+    --A: #4caf50; --B: #a8e05f; --C: #ffc400; --D: #ff9a3c; --E: #ff4f4f; --NA: #7d7b90;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--testo);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px;
+    padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--linea); }
+  header h1 { margin: 0; font-size: 16px; font-weight: 700; }
+  header .conta { color: var(--muted); font-size: 12px; }
+  .filtri { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .filtri .etichetta { color: var(--testo2); font-size: 12px; margin-right: 2px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--linea); background: var(--bg2); color: var(--testo); font: inherit;
+    font-size: 12px; cursor: pointer; user-select: none; }
+  .chip .pall { width: 9px; height: 9px; border-radius: 50%; }
+  .chip[aria-pressed="false"] { opacity: .38; }
+  .seg { display: inline-flex; border: 1px solid var(--linea); border-radius: 999px; overflow: hidden; }
+  .seg button { background: var(--bg2); color: var(--testo2); border: 0; font: inherit; font-size: 12px;
+    padding: 3px 10px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--linea); }
+  .seg button[aria-pressed="true"] { background: var(--testo); color: var(--bg); font-weight: 700; }
+  .chip:focus-visible, input:focus-visible, button:focus-visible { outline: 2px solid var(--C); outline-offset: 1px; }
+  #cerca { background: var(--bg2); border: 1px solid var(--linea); color: var(--testo); border-radius: 6px;
+    padding: 5px 9px; font: inherit; font-size: 12px; width: 230px; max-width: 100%; }
+  #cerca::placeholder { color: var(--muted); }
+
+  main { position: relative; min-height: 0; display: grid; grid-template-columns: 1fr auto; }
+  #mappa { height: 100%; min-height: 300px; background: #11101a; }
+  #pannello { width: 500px; max-width: 100vw; height: 100%; overflow-y: auto; background: var(--bg);
+    border-left: 1px solid var(--linea); display: none; }
+  #pannello.aperto { display: block; }
+
+  .cluster { width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center; padding: 4px; }
+  .cluster span { width: 100%; height: 100%; border-radius: 50%; background: var(--bg); color: var(--testo);
+    display: grid; place-items: center; font-weight: 700; font-size: 11px; }
+  .leaflet-container { font: inherit; }
+  .leaflet-control-attribution { background: rgba(28,27,41,.8) !important; color: var(--muted) !important; }
+  .leaflet-control-attribution a { color: var(--testo2) !important; }
+
+  /* ---- pannello ---- */
+  .carta { padding: 18px 18px 22px; position: relative; }
+  .chiudi { position: absolute; top: 10px; right: 10px; background: none; border: 0; color: var(--muted);
+    font-size: 22px; line-height: 1; cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+  .chiudi:hover { color: var(--testo); background: var(--bg2); }
+  .indietro { background: none; border: 0; color: var(--testo2); font: inherit; font-size: 12px; cursor: pointer;
+    padding: 0; margin-bottom: 8px; }
+  .indietro:hover { color: var(--testo); text-decoration: underline; }
+  .carta h2 { margin: 0 34px 4px 0; font-size: 19px; line-height: 1.2; }
+  .carta h3 { margin: 18px 0 8px; font-size: 12px; color: var(--testo2); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em; }
+  .sotto { color: var(--muted); font-size: 11px; word-break: break-all; }
+  .badge { display: inline-block; margin: 8px 6px 0 0; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+    border: 1px solid var(--linea); color: var(--testo2); }
+  .badge b { color: var(--testo); }
+  .nota { color: var(--muted); font-size: 11px; margin: 6px 0 0; }
+  .sintesi { margin-top: 16px; text-align: center; }
+  .sintesi svg { display: block; margin: 0 auto; }
+  .sintesi .score { font-weight: 700; font-size: 15px; margin-top: 4px; }
+  .sintesi .nota { margin: 0; }
+
+  /* righe micro-FIS nella carta */
+  .mfis { display: grid; grid-template-columns: 74px 70px 1fr; align-items: center; gap: 4px 10px;
+    padding: 7px 0; border-bottom: 1px solid var(--traccia); }
+  .mfis .nome { font-weight: 700; font-size: 13px; }
+  .mfis .sc { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .mfis .sc b { font-size: 14px; }
+  .mfis .cop { font-size: 12px; color: var(--testo2); font-variant-numeric: tabular-nums; }
+  .mfis .cop b { color: var(--testo); }
+  .segmenti { display: flex; gap: 2px; height: 8px; margin-top: 4px; }
+  .segmenti i { display: block; height: 100%; border-radius: 2px; min-width: 2px; }
+
+  /* tabella riepilogo */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 6px; text-align: right; border-bottom: 1px solid var(--traccia); }
+  th { color: var(--testo2); font-weight: 600; font-size: 11px; vertical-align: bottom; }
+  th:first-child, td:first-child { text-align: left; }
+  td .pct { display: block; font-weight: 700; color: var(--testo); font-size: 13px; }
+  td .n { color: var(--muted); font-size: 11px; }
+  td .barra { display: block; height: 4px; background: var(--traccia); border-radius: 2px; margin-top: 3px; }
+  td .barra i { display: block; height: 100%; background: var(--testo2); border-radius: 2px; }
+  .stack { display: flex; height: 14px; border-radius: 3px; overflow: hidden; background: var(--traccia); }
+  .stack i { display: block; height: 100%; }
+  .riga-stack { display: grid; grid-template-columns: 74px 1fr; gap: 10px; align-items: center; margin: 8px 0 2px; font-size: 12px; }
+  .riga-stack .leg { grid-column: 2; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .legenda { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--testo2); margin-top: 8px; }
+  .legenda span { display: inline-flex; align-items: center; gap: 5px; }
+  .legenda i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+  .tab-oriz td, .tab-oriz th { padding: 4px 5px; }
+  .tab-oriz td.cella { font-weight: 700; }
+  .colonna svg { display: block; width: 100%; }
+  .info { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--linea); color: var(--muted); font-size: 11px; }
+  .info a { color: var(--testo2); }
+
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; }
+    #pannello { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 72%;
+      border-left: 0; border-top: 1px solid var(--linea); z-index: 1000; border-radius: 12px 12px 0 0; }
+    #cerca { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <h1>Soil Health Identity Card · orizzonti</h1>
+      <div class="conta" id="conta">caricamento…</div>
+    </div>
+    <div class="filtri"><span class="etichetta">Score</span><span class="seg" id="sel-fis"></span></div>
+    <div class="filtri" id="filtro-cat" aria-label="Filtra per classe"><span class="etichetta">Classe</span></div>
+    <div class="filtri" id="filtro-compl" aria-label="Filtra per spessore con score"><span class="etichetta" title="Quota dello spessore del profilo in cui lo score scelto è presente. È anche il colore dei punti sulla mappa.">Completezza del profilo</span></div>
+    <input id="cerca" type="search" placeholder="Cerca profile_id…" aria-label="Cerca profile_id" list="ids">
+    <datalist id="ids"></datalist>
+    <div class="filtri" id="filtro-livelli" aria-label="Filtra per scheletro"><span class="etichetta">Scheletro</span></div>
+    <button class="chip" type="button" id="btn-riepilogo">Riepilogo orizzonti</button>
+  </header>
+  <main>
+    <div id="mappa"></div>
+    <aside id="pannello" aria-live="polite"></aside>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script src="dati_shic_orizzonti_1.js"></script>
+<script src="dati_shic_orizzonti_2.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ---------- soglie e stile, identici agli script R ----------
+  const BREAKS = [-Infinity, 7.5, 10, 20.5, 23, 25.5, 38.5, 41, 43.5, 56.5, 59, 61.5, 74.5, 77, 79.5, 90, 92.5, Infinity];
+  const GRADES = ["E--", "E-", "E", "E+", "D-", "D", "D+", "C-", "C", "C+", "B-", "B", "B+", "A-", "A", "A+", "A++"];
+  const COL = { A: "#4caf50", B: "#a8e05f", C: "#ffc400", D: "#ff9a3c", E: "#ff4f4f" };
+  const GIUDIZIO = { A: "Ottimo", B: "Buono", C: "Moderato", D: "Scarso", E: "Critico" };
+  const BG = "#1c1b29", TRACCIA = "#34324a", MUTED = "#7d7b90", TESTO = "#f2f1f7", TESTO2 = "#b9b7c9";
+
+  // i quattro score per orizzonte (colonne di phy_all, che_all, soc_all, results_all)
+  const FIS = [
+    { k: 0, nome: "Physical", breve: "Phy" },
+    { k: 1, nome: "Chemical", breve: "Che" },
+    { k: 2, nome: "SOC", breve: "SOC" },
+    { k: 3, nome: "SCORE", breve: "SCORE" }
+  ];
+  // completezza = quota dello spessore del profilo in cui lo score c'e' (come media_e_completezza)
+  // colori diversi da quelli delle classi (A-E), per non confondere le due letture
+  const COMPL = [
+    { k: "c100", et: "100%", col: "#a855f7" },
+    { k: "c50", et: "50–99%", col: "#f472b6" },
+    { k: "c1", et: "1–49%", col: "#3b82f6" },
+    { k: "c0", et: "0%", col: "#bae6fd" }
+  ];
+  const LIVELLI = { CF1: "CF1 · scheletro misurato in tutti gli orizzonti",
+                    CF0: "CF0 · scheletro mancante in almeno un orizzonte (assunto 0)" };
+
+  function grade(x) {
+    if (x === null || x === undefined || Number.isNaN(x)) return null;
+    for (let i = 0; i < GRADES.length; i++) if (x > BREAKS[i] && x <= BREAKS[i + 1]) return GRADES[i];
+    return null;
+  }
+  const classe = x => { const g = grade(x); return g ? g[0] : null; };
+  const colore = cl => cl ? COL[cl] : MUTED;
+  const fmt = (x, d = 1) => (x === null || x === undefined) ? "n.d." : x.toFixed(d).replace(".", ",");
+  const pct = (a, b) => b ? (a / b * 100) : 0;
+  const fpct = (a, b) => b ? fmt(pct(a, b), 1) + "%" : "–";
+  const num = n => n.toLocaleString("it-IT");
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  // x = % dello spessore del profilo coperto da orizzonti con lo score
+  const complCat = x => x >= 99.999 ? "c100" : x <= 0 ? "c0" : x >= 50 ? "c50" : "c1";
+  const complCol = k => COMPL.find(c => c.k === k).col;
+
+  // ---------- dati ----------
+  const pannello = document.getElementById("pannello");
+  if (!window.SHIC) {
+    document.getElementById("conta").textContent = "dati_shic_orizzonti.js non trovato: esegui crea_dati_mappa_orizzonti.py";
+    return;
+  }
+  const PROV = window.SHIC.providers || [];
+  const nv = s => s === "" ? null : parseFloat(s);
+  // profilo: [id, lat, lon, indice provider, "u,l,phy,che,soc,SCORE,cf;..."]
+  const profili = window.SHIC.profili.map(r => {
+    const oriz = r[4] ? r[4].split(";").map(t => {
+      const a = t.split(",");
+      return { u: +a[0], l: +a[1], s: [nv(a[2]), nv(a[3]), nv(a[4]), nv(a[5])], cf: a[6] === "1" };
+    }) : [];
+    const n = oriz.length;
+    const media = [], conta = [], spes = [];
+    let spTot = 0;
+    oriz.forEach(o => { spTot += Math.max(o.l - o.u, 0); });
+    for (let k = 0; k < 4; k++) {
+      let sw = 0, w = 0, c = 0, sp = 0;
+      oriz.forEach(o => {
+        const v = o.s[k]; if (v === null) return;
+        const t = Math.max(o.l - o.u, 0);
+        c++; sp += t; sw += v * t; w += t;
+      });
+      media.push(w > 0 ? sw / w : null);           // come weighted.mean(score, thickness, na.rm = TRUE)
+      conta.push(c);
+      spes.push(spTot > 0 ? sp / spTot * 100 : 0);  // come completezza in media_e_completezza()
+    }
+    const nCf = oriz.filter(o => o.cf).length;
+    return { id: r[0], lat: r[1], lon: r[2], provider: r[3] >= 0 ? PROV[r[3]] : null, oriz, n,
+             media, conta, spes, nCf, livello: nCf === n ? "CF1" : "CF0" };
+  });
+  const perId = new Map(profili.map(p => [p.id, p]));
+  const totOriz = profili.reduce((a, p) => a + p.n, 0);
+
+  // ---------- stato ----------
+  // i punti si colorano per quota di spessore con lo score scelto;
+  // i due filtri (classe e spessore) valgono sempre
+  const stato = { fis: 3, modo: "compl", cat: new Set(["A", "B", "C", "D", "E", "nd"]),
+                  compl: new Set(COMPL.map(c => c.k)), livelli: new Set(["CF1", "CF0"]) };
+  const categoria = p => stato.modo === "classe" ? (classe(p.media[stato.fis]) || "nd") : complCat(p.spes[stato.fis]);
+  const coloreCat = k => k === "nd" ? MUTED : (COL[k] || complCol(k));
+  const CLASSI = ["A", "B", "C", "D", "E"].map(k => ({ k, et: `${k} ${GIUDIZIO[k]}`, col: COL[k] }))
+    .concat([{ k: "nd", et: "n.d.", col: MUTED }]);
+  const categorie = () => stato.modo === "classe" ? CLASSI : COMPL;
+
+  // ---------- mappa ----------
+  const mappa = L.map("mappa", { worldCopyJump: true, preferCanvas: true }).setView([20, 0], 2);
+  const esri = (servizio, attr) => L.tileLayer(
+    `https://server.arcgisonline.com/ArcGIS/rest/services/${servizio}/MapServer/tile/{z}/{y}/{x}`,
+    { maxZoom: 18, referrerPolicy: "no-referrer", attribution: `Mappa &copy; Esri${attr ? ", " + attr : ""} · dati WoSIS` });
+  const basi = {
+    "Stradale":    esri("World_Street_Map"),
+    "Topografica": esri("World_Topo_Map"),
+    "Satellite":   esri("World_Imagery", "Maxar, Earthstar Geographics")
+  };
+  basi["Stradale"].addTo(mappa);
+  L.control.layers(basi, null, { position: "topright" }).addTo(mappa);
+
+  const cluster = L.markerClusterGroup({
+    chunkedLoading: true, maxClusterRadius: 45, showCoverageOnHover: false,
+    chunkProgress: (fatti, tot) => { if (fatti >= tot) fineCaricamento(); },
+    iconCreateFunction: c => {
+      const ordine = categorie().map(x => x.k);
+      const conta = Object.fromEntries(ordine.map(k => [k, 0]));
+      c.getAllChildMarkers().forEach(m => { conta[m.options.cat] = (conta[m.options.cat] || 0) + 1; });
+      const n = c.getChildCount();
+      let acc = 0;
+      const fette = ordine.map(k => {
+        const da = acc / n * 360; acc += conta[k]; const a = acc / n * 360;
+        return `${coloreCat(k)} ${da}deg ${a}deg`;
+      });
+      const d = n < 10 ? 30 : n < 100 ? 36 : n < 1000 ? 44 : 52;
+      return L.divIcon({
+        html: `<div class="cluster" style="background:conic-gradient(${fette.join(",")})"><span>${n}</span></div>`,
+        className: "", iconSize: [d, d]
+      });
+    }
+  });
+
+  const marker = new Map();
+  profili.forEach(p => {
+    const m = L.circleMarker([p.lat, p.lon], { radius: 6, weight: 1.5, color: BG, fillOpacity: 1 });
+    m.bindTooltip(() => tooltip(p), { direction: "top", offset: [0, -4] });
+    m.on("click", () => apri(p.id));
+    marker.set(p.id, m);
+  });
+  function tooltip(p) {
+    const f = FIS[stato.fis], c = p.conta[stato.fis];
+    return `${f.nome}: ${grade(p.media[stato.fis]) || "n.d."} ${fmt(p.media[stato.fis])} · ${c}/${p.n} orizzonti · ${fmt(p.spes[stato.fis], 0)}% dello spessore`;
+  }
+  function ricolora() {
+    profili.forEach(p => {
+      const m = marker.get(p.id), k = categoria(p);
+      m.options.cat = k;
+      m.setStyle({ fillColor: coloreCat(k) });
+    });
+  }
+
+  // ---------- controlli ----------
+  function segmentato(id, opzioni, attivo, onSel) {
+    const box = document.getElementById(id);
+    opzioni.forEach(([v, et]) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = et; b.setAttribute("aria-pressed", v === attivo);
+      b.addEventListener("click", () => {
+        box.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b));
+        onSel(v);
+      });
+      box.appendChild(b);
+    });
+  }
+  segmentato("sel-fis", FIS.map(f => [f.k, f.nome]), stato.fis, v => { stato.fis = v; cambiaColori(); });
+  function chip(contenitore, chiave, insieme, etichetta, col) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.type = "button"; b.setAttribute("aria-pressed", insieme.has(chiave));
+    b.innerHTML = (col ? `<span class="pall" style="background:${col}"></span>` : "") + esc(etichetta);
+    b.addEventListener("click", () => {
+      if (insieme.has(chiave)) insieme.delete(chiave); else insieme.add(chiave);
+      b.setAttribute("aria-pressed", insieme.has(chiave));
+      aggiorna();
+    });
+    contenitore.appendChild(b);
+  }
+  const fl = document.getElementById("filtro-livelli");
+  chip(fl, "CF1", stato.livelli, "CF1 misurato ovunque");
+  chip(fl, "CF0", stato.livelli, "CF0 mancante in qualche orizzonte");
+
+  const fcat = document.getElementById("filtro-cat");
+  CLASSI.forEach(c => chip(fcat, c.k, stato.cat, c.et, c.col));
+  const fcompl = document.getElementById("filtro-compl");
+  COMPL.forEach(c => chip(fcompl, c.k, stato.compl, c.et, c.col));
+
+  function cambiaColori() {
+    ricolora();
+    aggiorna();
+  }
+
+  // il caricamento a blocchi di markercluster non si interrompe con clearLayers():
+  // se si cambia filtro mentre carica, i marker vecchi tornerebbero sulla mappa.
+  // Quindi un solo caricamento alla volta; l'ultimo cambio aspetta la fine del precedente.
+  let inCorso = false, pendente = false;
+  function ridisegna() {
+    if (inCorso) { pendente = true; return; }
+    cluster.clearLayers();
+    const m = visibili.map(p => marker.get(p.id));
+    if (!m.length) return;
+    inCorso = true;
+    cluster.addLayers(m);
+  }
+  function fineCaricamento() {
+    inCorso = false;
+    if (pendente) { pendente = false; ridisegna(); }
+  }
+
+  let visibili = profili;
+  function aggiorna() {
+    visibili = profili.filter(p => stato.cat.has(classe(p.media[stato.fis]) || "nd") &&
+                                   stato.compl.has(complCat(p.spes[stato.fis])) &&
+                                   stato.livelli.has(p.livello));
+    ridisegna();
+    const no = visibili.reduce((a, p) => a + p.n, 0);
+    document.getElementById("conta").textContent =
+      `${num(visibili.length)} di ${num(profili.length)} profili · ${num(no)} di ${num(totOriz)} orizzonti`;
+    if (vista === "riepilogo") riepilogo();
+  }
+
+  // ---------- riepilogo per orizzonti (profili visibili) ----------
+  let vista = null;
+  function cella(a, b) {
+    const x = pct(a, b);
+    return `<td><span class="pct">${b ? fmt(x, 1) + "%" : "–"}</span><span class="n">${num(a)} / ${num(b)}</span>
+            <span class="barra"><i style="width:${x}%"></i></span></td>`;
+  }
+  function riepilogo() {
+    vista = "riepilogo";
+    const tot = [0, 0], con = [[0, 0], [0, 0], [0, 0], [0, 0]];   // [cf misurato, cf mancante]
+    const prof = FIS.map(() => ({ c100: 0, c50: 0, c1: 0, c0: 0 }));
+    visibili.forEach(p => {
+      p.oriz.forEach(o => {
+        const j = o.cf ? 0 : 1; tot[j]++;
+        for (let k = 0; k < 4; k++) if (o.s[k] !== null) con[k][j]++;
+      });
+      for (let k = 0; k < 4; k++) prof[k][complCat(p.spes[k])]++;
+    });
+    const T = tot[0] + tot[1], P = visibili.length;
+    const righe = FIS.map(f => {
+      const c = con[f.k];
+      return `<tr><td><b>${f.nome}</b></td>${cella(c[0] + c[1], T)}${cella(c[0], tot[0])}${cella(c[1], tot[1])}</tr>`;
+    }).join("");
+    const stack = FIS.map(f => {
+      const q = prof[f.k];
+      const barre = COMPL.map(c => `<i style="width:${pct(q[c.k], P)}%;background:${c.col}" title="${c.et}: ${num(q[c.k])} profili"></i>`).join("");
+      const leg = COMPL.map(c => `${c.et} ${num(q[c.k])} (${fpct(q[c.k], P)})`).join(" · ");
+      return `<div class="riga-stack"><b>${f.nome}</b><div class="stack">${barre}</div><div class="leg">${leg}</div></div>`;
+    }).join("");
+    const lv = { CF1: 0, CF0: 0 }; visibili.forEach(p => lv[p.livello]++);
+
+    pannello.innerHTML = `<article class="carta">
+      <button class="chiudi" type="button" aria-label="Chiudi il riepilogo">×</button>
+      <h2>Score presenti per orizzonte</h2>
+      <div class="sotto">${num(P)} profili visibili · ${num(T)} orizzonti
+        (${num(tot[0])} con scheletro misurato, ${num(tot[1])} senza)</div>
+      <h3>Orizzonti con lo score</h3>
+      <table>
+        <thead><tr><th>Score</th><th>Tutti gli orizzonti</th><th>Con scheletro</th><th>Senza scheletro</th></tr></thead>
+        <tbody>${righe}</tbody>
+      </table>
+      <p class="nota">Negli orizzonti senza scheletro il Physical (e quindi lo SCORE) è calcolato con scheletro = 0, come in ISRIC_all.R.</p>
+      <h3>Profili per quota di spessore con lo score</h3>
+      ${stack}
+      <div class="legenda">${COMPL.map(c => `<span><i style="background:${c.col}"></i>${c.et} dello spessore</span>`).join("")}</div>
+      <h3>Livello del profilo</h3>
+      <table><tbody>
+        <tr><td>${esc(LIVELLI.CF1)}</td><td><b>${num(lv.CF1)}</b> <span class="n">(${fpct(lv.CF1, P)})</span></td></tr>
+        <tr><td>${esc(LIVELLI.CF0)}</td><td><b>${num(lv.CF0)}</b> <span class="n">(${fpct(lv.CF0, P)})</span></td></tr>
+      </tbody></table>
+      <div class="info">I numeri seguono i filtri in alto. ${window.SHIC.esclusi ? `${num(window.SHIC.esclusi)} profili senza coordinate non sono in mappa. ` : ""}Clic su un punto per la carta del profilo.</div>
+    </article>`;
+    pannello.classList.add("aperto");
+    pannello.querySelector(".chiudi").addEventListener("click", chiudi);
+    setTimeout(() => mappa.invalidateSize(), 0);
+  }
+  document.getElementById("btn-riepilogo").addEventListener("click", () => {
+    history.replaceState(null, "", location.pathname + location.search);
+    riepilogo(); pannello.scrollTop = 0;
+  });
+
+  // ---------- ricerca ----------
+  const dl = document.getElementById("ids");
+  const cerca = document.getElementById("cerca");
+  cerca.addEventListener("input", () => {
+    const q = cerca.value.trim().toLowerCase();
+    dl.innerHTML = q.length < 3 ? "" :
+      profili.filter(p => p.id.toLowerCase().includes(q)).slice(0, 20).map(p => `<option value="${esc(p.id)}">`).join("");
+    if (perId.has(cerca.value.trim())) vai(cerca.value.trim());
+  });
+  cerca.addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+    const q = cerca.value.trim().toLowerCase();
+    const p = perId.get(cerca.value.trim()) || profili.find(p => p.id.toLowerCase().includes(q));
+    if (p) vai(p.id);
+  });
+  function vai(id) {
+    const p = perId.get(id); if (!p) return;
+    apri(id);
+    setTimeout(() => { mappa.invalidateSize(); mappa.setView([p.lat, p.lon], Math.max(mappa.getZoom(), 11), { animate: false }); }, 0);
+  }
+
+  // ---------- carta del profilo ----------
+  function anello(col, testo, dim, spessore, dimTesto) {
+    const r = (dim - spessore) / 2, c = dim / 2;
+    return `<svg viewBox="0 0 ${dim} ${dim}" width="${dim}" height="${dim}" role="img" aria-label="${esc(testo)}">
+      <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${col}" stroke-width="${spessore}"/>
+      <text x="${c}" y="${c}" text-anchor="middle" dominant-baseline="central" fill="${col}"
+        font-weight="700" font-size="${dimTesto}">${esc(testo)}</text></svg>`;
+  }
+
+  // matrice orizzonti x score: altezza delle righe proporzionale allo spessore
+  function matrice(p) {
+    if (!p.n) return "";
+    const W = 464, AX = 44, top = 18, colW = (W - AX) / 5;
+    const bottom = Math.max(...p.oriz.map(o => o.l));
+    const H = Math.min(420, Math.max(180, p.n * 26));
+    const y = v => top + v / bottom * (H - top - 4);
+    const passo = [5, 10, 20, 25, 50, 100, 200, 500].find(s => bottom / s <= 6) || 1000;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Score per orizzonte">`;
+    ["Phy", "Che", "SOC", "SCORE", "Schel."].forEach((t, i) =>
+      s += `<text x="${AX + colW * i + colW / 2}" y="10" text-anchor="middle" fill="${TESTO2}" font-size="10">${t}</text>`);
+    for (let v = 0; v <= bottom; v += passo)
+      s += `<text x="${AX - 6}" y="${y(v)}" text-anchor="end" dominant-baseline="central" fill="${MUTED}" font-size="9">${v} cm</text>`;
+    p.oriz.forEach(o => {
+      const y1 = y(o.u), h = Math.max(y(o.l) - y1, 1);
+      for (let k = 0; k < 4; k++) {
+        const v = o.s[k], cl = classe(v), x = AX + colW * k;
+        const titolo = `${o.u}–${o.l} cm · ${FIS[k].nome}: ${v === null ? "score mancante" : grade(v) + " " + fmt(v)}`;
+        s += `<rect x="${x}" y="${y1}" width="${colW}" height="${h}" fill="${v === null ? TRACCIA : colore(cl)}" stroke="${BG}" stroke-width="2"><title>${titolo}</title></rect>`;
+        if (h >= 13)
+          s += `<text x="${x + colW / 2}" y="${y1 + h / 2}" text-anchor="middle" dominant-baseline="central" font-size="10"
+                  font-weight="700" fill="${v === null ? MUTED : BG}" pointer-events="none">${v === null ? "–" : fmt(v, 0)}</text>`;
+      }
+      const x = AX + colW * 4;
+      s += `<rect x="${x}" y="${y1}" width="${colW}" height="${h}" fill="${o.cf ? "#4a4866" : BG}" stroke="${o.cf ? BG : TRACCIA}" stroke-width="2">
+              <title>${o.u}–${o.l} cm · scheletro ${o.cf ? "misurato" : "mancante (assunto 0)"}</title></rect>`;
+      if (h >= 13)
+        s += `<text x="${x + colW / 2}" y="${y1 + h / 2}" text-anchor="middle" dominant-baseline="central" font-size="10"
+                fill="${o.cf ? TESTO : MUTED}" pointer-events="none">${o.cf ? "misurato" : "= 0"}</text>`;
+    });
+    return s + "</svg>";
+  }
+
+  // anello con la lettera dello SCORE finale, solo se lo SCORE c'e' in almeno un orizzonte
+  function sintesi(p) {
+    const m = p.media[3], g = grade(m);
+    if (!g) return "";
+    const cl = g[0], col = colore(cl);
+    return `<div class="sintesi">
+      ${anello(col, g, 140, 22, g.length > 2 ? 38 : 46)}
+      <div class="score" style="color:${col}">SCORE ${fmt(m)} · ${GIUDIZIO[cl]}</div>
+      <p class="nota">media ponderata sullo spessore · ${fmt(p.spes[3], 0)}% dello spessore con lo SCORE</p>
+    </div>`;
+  }
+
+  function apri(id) {
+    const p = perId.get(id); if (!p) return;
+    vista = "profilo";
+    const top = p.n ? Math.min(...p.oriz.map(o => o.u)) : null;
+    const bot = p.n ? Math.max(...p.oriz.map(o => o.l)) : null;
+    const righe = FIS.map(f => {
+      const m = p.media[f.k], cl = classe(m), c = p.conta[f.k];
+      const seg = p.oriz.map(o => `<i style="flex:${Math.max(o.l - o.u, 1)};background:${o.s[f.k] === null ? TRACCIA : colore(classe(o.s[f.k]))}"
+                   title="${o.u}–${o.l} cm"></i>`).join("");
+      return `<div class="mfis">
+        <span class="nome" style="color:${colore(cl)}">${f.nome}</span>
+        <span class="sc"><b>${grade(m) || "n.d."}</b> ${fmt(m)}</span>
+        <span class="cop"><b>${c} di ${p.n}</b> orizzonti · <b>${fmt(p.spes[f.k], 0)}%</b> dello spessore
+          <span class="segmenti">${seg}</span></span>
+      </div>`;
+    }).join("");
+    const tab = p.oriz.map(o => `<tr><td>${o.u}–${o.l}</td>${o.s.map(v =>
+      `<td class="cella" style="color:${v === null ? MUTED : colore(classe(v))}">${v === null ? "–" : fmt(v)}</td>`).join("")}
+      <td style="color:${o.cf ? TESTO : MUTED}">${o.cf ? "misurato" : "= 0"}</td></tr>`).join("");
+
+    pannello.innerHTML = `<article class="carta">
+      <button class="chiudi" type="button" aria-label="Chiudi la carta">×</button>
+      <button class="indietro" type="button">← Riepilogo orizzonti</button>
+      <h2>Soil Health Identity Card (SHIC)</h2>
+      <div class="sotto">Profilo ${esc(p.id)} · ${p.n} ${p.n === 1 ? "orizzonte" : "orizzonti"}${p.n ? ` · ${top}–${bot} cm` : ""}</div>
+      <span class="badge">Livello <b>${p.livello}</b></span>
+      <span class="badge">Scheletro misurato in <b>${p.nCf} di ${p.n}</b> orizzonti</span>
+      ${sintesi(p)}
+      <h3>Score per orizzonte</h3>
+      ${righe}
+      <p class="nota">Score = media ponderata sullo spessore degli orizzonti in cui c'è. La barra sotto ogni riga segue il profilo dall'alto verso il basso: grigio scuro = score mancante.</p>
+      <h3>Colonna del profilo</h3>
+      <div class="colonna">${matrice(p)}</div>
+      <h3>Valori</h3>
+      <table class="tab-oriz">
+        <thead><tr><th>cm</th><th>Phy</th><th>Che</th><th>SOC</th><th>SCORE</th><th>Scheletro</th></tr></thead>
+        <tbody>${tab}</tbody>
+      </table>
+      <div class="info">
+        ${fmt(p.lat, 4)}, ${fmt(p.lon, 4)}${p.provider ? ` · fonte ${esc(p.provider)}` : ""}
+        · <a href="#${encodeURIComponent(p.id)}">link a questo profilo</a>
+      </div>
+    </article>`;
+    pannello.classList.add("aperto");
+    pannello.scrollTop = 0;
+    pannello.querySelector(".chiudi").addEventListener("click", chiudi);
+    pannello.querySelector(".indietro").addEventListener("click", () => {
+      history.replaceState(null, "", location.pathname + location.search); riepilogo();
+    });
+    history.replaceState(null, "", "#" + encodeURIComponent(p.id));
+    setTimeout(() => mappa.invalidateSize(), 0);
+  }
+  function chiudi() {
+    vista = null;
+    pannello.classList.remove("aperto");
+    pannello.innerHTML = "";
+    history.replaceState(null, "", location.pathname + location.search);
+    setTimeout(() => mappa.invalidateSize(), 0);
+  }
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && pannello.classList.contains("aperto")) chiudi(); });
+
+  // ---------- avvio ----------
+  mappa.addLayer(cluster);
+  if (window.matchMedia("(min-width: 761px)").matches) vista = "riepilogo";
+  cambiaColori();
+  if (profili.length) mappa.fitBounds(L.latLngBounds(profili.map(p => [p.lat, p.lon])), { padding: [20, 20], animate: false });
+  const daHash = decodeURIComponent(location.hash.slice(1));
+  if (perId.has(daHash)) vai(daHash);
+})();
+</script>
+</body>
+</html>
